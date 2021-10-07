@@ -21,6 +21,8 @@ executable ApplicativesAndEffects
   main-is:             Main.hs
   -- exposed-modules:       SyntaxAndSemanticsForOperationsWithScopes
   -- other-extensions:
-  build-depends:       base >=4.13 && <4.14
+  build-depends:      base >=4.13 && <4.14,
+                      containers,
+                      mtl
   -- hs-source-dirs:
   default-language:    Haskell2010
