@@ -211,6 +211,8 @@ exec3 = fold genS algS (incr' >> get') 5
 data (sig1 + sig2) a 
   = Inl (sig1 a) 
   | Inr (sig2 a)
+  deriving Functor
+
 data VOID k deriving Functor
 
 runVOID :: Free VOID a -> a
@@ -219,3 +221,22 @@ runVOID = fold id undefined
 (▽) :: (sig1 b -> b) -> (sig2 b -> b) -> ((sig1 + sig2) b -> b)
 (alg1 ▽ alg2) (Inl op) = alg1 op
 (alg1 ▽ alg2) (Inr op) = alg2 op
+
+
+data FAIL k = FAIL
+  deriving Functor
+fail' = Op FAIL
+
+type CF a = Free (STATE Int + VOID) (Maybe a)
+
+genMF :: Monad m => a -> CF a
+genMF x = return (Just x)
+
+algMF :: FAIL (CF a) -> (CF a)
+algMF FAIL = return Nothing
+
+fwdMF ::  (STATE Int + VOID) (CF a) -> (CF a)
+fwdMF op = Op op
+
+handleMF :: Free (FAIL + (STATE Int + VOID)) a -> Free (STATE Int + VOID) (Maybe a)
+handleMF = fold genMF (algMF ▽ fwdMF)
