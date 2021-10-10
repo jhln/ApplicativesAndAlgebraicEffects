@@ -7,7 +7,12 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverlappingInstances #-}
+--{-# LANGUAGE IncoherentInstances #-}
 
 
 
@@ -67,7 +72,6 @@ test3 = allsolsB $ knapsackB 3 [3,2,1]
 
 
 --- 3. Syntax Signatures
-
 
 
 data Prog sig a
@@ -300,3 +304,209 @@ expr2 = do
             (choice
               do symbol '+'; cut; j <- expr2; return (i+j)
               do return i)
+
+
+
+--- 7. Scoped Syntax
+
+
+data Call cnt 
+  = BCall' cnt 
+  | ECall' cnt
+  deriving Functor
+pattern BCall p <- (project -> Just (BCall' p))
+pattern ECall p <- (project -> Just (ECall' p))
+
+
+call' ::(Call ⊂ sig) => Prog sig a -> Prog sig a
+call' p = do begin; x <- p; end ; return x 
+  where
+    begin = inject (BCall' (return ()))
+    end = inject (ECall' (return ()))
+
+
+expr3 ::(Nondet ⊂ sig,Symbol ⊂ sig,Call ⊂ sig,Cut ⊂ sig) 
+  => Prog sig Int
+expr3 = do 
+          i <- term
+          call' $
+            choice
+              do symbol '+'; cut; j <- expr3; return (i+j)
+              do return i
+
+{-
+--- problem with fmap
+
+testParse2 = run . solutions . runCut . parse "1" $ expr3
+
+runCut ::(Nondet ⊂ sig) => 
+  Prog (Call + Cut + sig) a -> Prog sig a
+runCut p = call (bcall p)
+
+bcall ::(Nondet ⊂ sig) =>
+  Prog (Call + Cut + sig) a -> Prog (Cut + sig) a
+bcall (Return a) = return a
+bcall (BCall p) = upcast (call (ecall p)) >>= bcall
+bcall (ECall p) = error "Mismatched ECall!"
+bcall (Other op) = Op (fmap bcall op)
+
+ecall ::(Nondet ⊂ sig) =>
+  Prog (Call + Cut + sig) a -> Prog (Cut + sig) (Prog (Call + Cut + sig) a)
+ecall (Return a) = return (Return a)
+ecall (BCall p) = upcast (call (ecall p)) >>= ecall
+ecall (ECall p) = return p
+ecall (Other op) = Op (fmap ecall op)
+
+-}
+
+
+upcast ::(Functor f, Functor sig) 
+  => Prog sig a -> Prog (f + sig) a
+upcast (Return x) = return x
+upcast (Op op) = Op (Inr (fmap upcast op))
+
+
+--- 8. Exceptions
+
+{-
+
+--- double declaration of Throw'
+
+data Exc e cnt = Throw' e
+  deriving Functor
+pattern Throw e <- (project -> Just (Throw' e))
+throw::(Exc e ⊂ sig) => e -> Prog sig a
+throw e = inject (Throw' e)
+
+
+runExc ::Functor sig =>
+  Prog (Exc e + sig) a -> Prog sig (Either e a)
+runExc (Return x) = return (Right x)
+runExc (Throw e) = return (Left e)
+runExc (Other op) = Op (fmap runExc op)
+
+
+catch ::(Exc e ⊂ sig) => 
+  Prog sig a -> (e -> Prog sig a) -> Prog sig a
+catch (Return x) h = return x
+catch (Throw e) h = h e
+catch (Op op) h = Op (fmap (\ p -> catch p h) op)
+
+
+tripleDecr :: (State Int ⊂ sig, Exc () ⊂ sig) => Prog sig ()
+tripleDecr = decr >> catch (decr >> decr) return
+
+decr::(State Int ⊂ sig,Exc () ⊂ sig) => Prog sig ()
+decr = do 
+        x <- get
+        if x > (0 ::Int) 
+          then put (pred x)
+          else throw ()
+
+testCatch :: Either () (Int, ())
+testCatch = (run . runExc . runState (2 :: Int) ) tripleDecr
+-}
+
+--- 9. Scoped Syntax Revisited
+
+{-
+--- doesn't work with Functor bla bla
+
+data Catch e cnt 
+  = BCatch' cnt (e -> cnt) 
+  | ECatch' cnt
+  deriving Functor
+pattern BCatch p q <- (project -> Just (BCatch' p q))
+pattern ECatch p <- (project -> Just (ECatch' p))
+
+catch' :: (forall sig e a . (Catch e ⊂ sig)) =>
+  Prog sig a -> (e -> Prog sig a) -> Prog sig a
+catch' p h = begin (do x <- p; end ; return x) h 
+  where
+    begin p q = inject (BCatch' p q)
+    end = inject (ECatch' (return ()) :: Catch e (Prog sig ()))
+
+runCatch ::(Functor sig) =>
+  Prog (Catch e + (Exc e + sig)) a -> Prog sig (Either e a)
+runCatch p = runExc (bcatch p)
+
+bcatch ::(Functor sig) =>
+  Prog (Catch e + (Exc e + sig)) a -> Prog (Exc e + sig) a
+bcatch (Return a) = return a
+bcatch (BCatch p q) = do 
+                        r <- upcast (runExc (ecatch p))
+                        case r of
+                          Left e -> bcatch (q e)
+                          Right p' -> bcatch p'
+bcatch (ECatch p) = error "Mismatched ECatch!"
+bcatch (Other op) = Op (fmap bcatch op)
+
+ecatch ::(Functor sig) =>
+  Prog (Catch e + (Exc e + sig)) a -> Prog (Exc e + sig) (Prog (Catch e + (Exc e + sig)) a)
+ecatch (Return a) = return (Return a)
+ecatch (BCatch p q) = do 
+                        r <- upcast (runExc (ecatch p))
+                        case r of
+                          Left e -> ecatch (q e)
+                          Right p0 -> ecatch p0
+ecatch (ECatch p) = return p
+ecatch (Other op) = Op (fmap ecatch op)
+
+tripleDecr'::(State Int ⊂ sig,Exc () ⊂ sig, Catch () ⊂ sig) =>
+  Prog sig ()
+tripleDecr' = decr >> catch (decr >> decr) return
+
+testCatch2 :: Either () (Int, ())
+testCatch2 = (run . runCatch . runState 2) tripleDecr
+
+-}
+
+--- 10. Higher-Order Syntax
+
+data HExc e m a
+  = Throw' e
+  | forall x . Catch' (m x) (e -> m x) (x -> m a)
+
+instance Functor m => Functor (HExc e m) where
+  fmap f (Throw' e) = Throw' e
+  fmap f (Catch' p h k) = Catch' p h (fmap f . k)
+
+type f -*-> g = forall x . f x -> g x
+
+class HFunctor h where
+  hmap ::(Functor f ,Functor g) => (f -*-> g) -> (h f -*-> h g)
+instance HFunctor (HExc e) where
+  hmap t (Throw' x) = Throw' x
+  hmap t (Catch' p h k) = Catch' (t p) (t . h) (t . k)
+
+class HFunctor sig => Syntax sig where
+  emap :: (m a -> m b) -> (sig m a -> sig m b)
+  weave :: (Monad m, Monad n, Functor s) =>
+    s () -> Handler s m n -> (sig m a -> sig n (s a))
+
+type Handler s m n = forall x . s (m x) -> n (s x)
+
+{-
+data Prog sig a
+  = Return a
+  | Op (sig (Prog sig) a)
+-}
+
+{-
+instance Syntax sig => Monad (Prog sig) where
+  return v = Return v
+  Return v>>= prog = prog v
+  Op op >>= prog = Op (emap (>>= prog) op)
+
+-}
+
+instance Syntax (HExc e) where
+  emap f (Throw' e) = Throw' e
+  emap f (Catch' p h k) = Catch' p h (f . k)
+  weave f hdl (Throw' x) = Throw' x
+  weave f hdl (Catch' p h k) = Catch' 
+                                (hdl (fmap (const p) f))
+                                (\e -> hdl (fmap (const (h e)) f))
+                                (hdl . fmap k)
+
+
