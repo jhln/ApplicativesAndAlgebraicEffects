@@ -329,7 +329,7 @@ call' p = do begin; x <- p; end ; return x
     end = inject (ECall' (return ()))
 
 
-expr3 ::(Nondet ⊂ sig,Symbol ⊂ sig,Call ⊂ sig,Cut ⊂ sig)
+expr3 ::(Nondet ⊂ sig, Symbol ⊂ sig, Call ⊂ sig, Cut ⊂ sig)
   => Prog sig Int
 expr3 = do
           i <- term
@@ -338,30 +338,23 @@ expr3 = do
               do symbol '+'; cut; j <- expr3; return (i+j)
               do return i
 
-{-
---- problem with fmap
 
 testParse2 = run . solutions . runCut . parse "1" $ expr3
 
-runCut ::(Nondet ⊂ sig) =>
-  Prog (Call + Cut + sig) a -> Prog sig a
+runCut ::(Nondet ⊂ sig) => Prog (Call + (Cut + sig)) a -> Prog sig a
 runCut p = call (bcall p)
 
-bcall ::(Nondet ⊂ sig) =>
-  Prog (Call + Cut + sig) a -> Prog (Cut + sig) a
+bcall :: (Nondet ⊂ sig) => Prog  (Call + (Cut + sig))  a -> Prog (Cut + sig) a
 bcall (Return a) = return a
 bcall (BCall p) = upcast (call (ecall p)) >>= bcall
 bcall (ECall p) = error "Mismatched ECall!"
 bcall (Other op) = Op (fmap bcall op)
 
-ecall ::(Nondet ⊂ sig) =>
-  Prog (Call + Cut + sig) a -> Prog (Cut + sig) (Prog (Call + Cut + sig) a)
+ecall :: (Nondet ⊂ sig) => Prog (Call + (Cut + sig)) a -> Prog (Cut + sig) (Prog (Call + (Cut + sig)) a)
 ecall (Return a) = return (Return a)
 ecall (BCall p) = upcast (call (ecall p)) >>= ecall
 ecall (ECall p) = return p
 ecall (Other op) = Op (fmap ecall op)
-
--}
 
 
 upcast ::(Functor f, Functor sig)
