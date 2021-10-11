@@ -220,6 +220,107 @@ dbsTree n = dbsTree (n - 1) ||| dbsTree (n - 1)
 dbs' :: MonadProlog m => Int -> Heuristic m a
 dbs' db t = dbsTree db \*/ t
 
+(\*/) :: (MonadProlog m, MonadTrans (StarT Or)) => StarT Or m a -> StarT Or m a -> StarT Or m a
+p \*/ q = step 
+            p  
+            (\ (Or x1 x2) -> 
+              step
+                q
+                (\ (Or y1 y2) ->
+                  (x1 \*/ y1) ||| (x2 \*/ y2)))
+
+--infinitely branching tree
+inf :: Monad m => StarT Or m a
+inf = opF (Or inf inf)
+
+-- archetypal search tree hidden in all the heuristics of Section 5.4
+-- Figure 2: Search heuristics expressed as entwined trees
+dibs' :: (MonadProlog m) => Int -> Heuristic m a
+dibs' db t = (dibsTree db) \*/ t 
+  where
+    dibsTree 0 = fail
+    dibsTree n = dibsTree n \*/ dibsTree (n - 1)
+
+nbs' :: (MonadProlog m,MonadRef r m) => Int -> Heuristic m a
+nbs' n t = do 
+            ref <- newRef n
+            t \*/ nbsTree ref 
+              where
+                nbsTree ref = do 
+                                n <- modifyRef ref pred
+                                guard (n>0)
+                                nbsTree ref ||| nbsTree ref
+                                  where
+                                    guard True      =  return ()
+                                    guard False     =  fail
+
+fbs' :: (MonadProlog m,MonadRef r m) => Int -> Heuristic m a
+fbs' n t = do 
+            ref <- newRef n
+            fref <- newRef False
+            x <- t \*/ fbsTree ref fref
+            writeRef fref True
+            return x 
+              where
+                fbsTree ref fref = 
+                  fbsTree ref fref 
+                  |||
+                  do 
+                    b <- modifyRef fref (const False)
+                    when (not b) (do 
+                                    n <- modifyRef ref pred
+                                    guard (n>0))
+                    fbsTree ref fref
+                      where
+                        guard True      =  return ()
+                        guard False     =  fail
+                        when p s  = if p 
+                                      then s 
+                                      else return ()
+
+
+--Modular Definition of Heuristics
+
+dbsTreeArchetype :: (MonadProlog m, MonadTrans (StarT Or)) => Int -> StarT Or m b
+dbsTreeArchetype n = delay n >> fail
+
+delay :: (MonadProlog m, MonadTrans (StarT Or)) => Int -> StarT Or m ()
+delay 0 = return ()
+delay n = delay (n - 1) ||| delay (n - 1)
+
+
+itd :: (MonadProlog m,MonadRef r m) => Heuristic m a
+itd t = do 
+          newRef False >>= go t 0 
+            where
+              go t n ref = 
+                (t \*/ (delay n >> prune ref) )
+                |||
+                do 
+                  b <- readRef ref
+                  if b 
+                    then 
+                      do 
+                        writeRef ref False
+                        go t (n+1) ref
+                    else fail
+              prune ref = writeRef ref True>>fail
+
+
+--- 5.5 Step 4: Reflecting Syntax Back into Semantics
+
 --- type  |- f*-m = (Functor f, Functor m, Monad m)
+
+
+semOr:: MonadProlog m => StarT Or m a -> m a
+semOr = runFreeT alg 
+  where
+    alg (ReturnF a) = return a
+    alg (OpF (Or x y)) = semOr x |||semOr y
+
+
+-- queens'' n db = semOr (dbs db (queens n))
+
+--- 6. From Haskell to Prolog
 
 
