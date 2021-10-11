@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveAnyClass #-}
+--{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -7,11 +7,11 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+--{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE Rank2Types #-}
+--{-# LANGUAGE QuantifiedConstraints #-}
+--{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE OverlappingInstances #-}
 --{-# LANGUAGE IncoherentInstances #-}
 
 
@@ -45,12 +45,12 @@ instance Monad Backtr where
   (p :|| q) >>= r = (p>>=r) :|| (q>>=r)
 
 knapsackB :: Int -> [Int] -> Backtr [Int]
-knapsackB w vs 
+knapsackB w vs
   | w < 0 = FailB
   | w == 0 = ReturnB []
-  | w > 0 = do 
+  | w > 0 = do
               v <- selectB vs
-              vs' <- knapsackB (w - v) vs 
+              vs' <- knapsackB (w - v) vs
               ReturnB (v : vs')
 
 selectB :: [a] -> Backtr a
@@ -77,9 +77,13 @@ test3 = allsolsB $ knapsackB 3 [3,2,1]
 data Prog sig a
   = Return a                -- pure computations
   | Op (sig (Prog sig a))   -- impure computations
-  deriving (Functor, Applicative)
+  deriving (Functor)
 
-instance (Functor sig) => Monad (Prog sig) where
+instance Functor sig => Applicative (Prog sig) where
+  pure = return
+  (<*>) = ap
+
+instance Functor sig => Monad (Prog sig) where
   return v = Return v
   Return v >>= prog = prog v
   Op op >>= prog = Op (fmap (>>= prog) op)
@@ -100,12 +104,12 @@ instance Functor sig => sig ⊂ sig where
   inj = id
   prj = Just
 
-instance (Functor sig1, Functor sig2) 
+instance {-# OVERLAPS #-} (Functor sig1, Functor sig2)
   => sig1 ⊂ (sig1 + sig2) where
   inj = Inl
   prj (Inl fa) = Just fa
   prj _ = Nothing
-instance (Functor sig1, sig ⊂ sig2) 
+instance {-# OVERLAPS #-} (Functor sig1, sig ⊂ sig2)
   => sig ⊂ (sig1 + sig2) where
   inj = Inr . inj
   prj (Inr ga) = prj ga
@@ -126,13 +130,13 @@ pattern Choice p q <- (project -> Just (p :| q))
 choice :: (Nondet ⊂ sig) => Prog sig a -> Prog sig a -> Prog sig a
 choice p q = inject (p :| q)
 
-data Void cnt 
+data Void cnt
   deriving Functor
 
 run :: Prog Void a -> a
 run (Return x) = x
 
-pattern Other s = Op (Inr s) 
+pattern Other s = Op (Inr s)
 
 solutions :: (Functor sig) => Prog (Nondet + sig) a -> Prog sig [a]
 solutions (Return a) = return [a]
@@ -157,14 +161,14 @@ pattern Put s k <- (project -> Just (Put' s k))
 put ::(State s ⊂ sig) => s -> Prog sig ()
 put s = inject (Put' s (return ()))
 
-runState ::Functor sig 
+runState ::Functor sig
   => s -> Prog (State s + sig) a -> Prog sig (s,a)
 runState s (Return a) = return (s,a)
 runState s (Get k) = runState s (k s)
 runState s (Put s' k) = runState s' k
 runState s (Other op) = Op (fmap (runState s) op)
 
---runLocal :: Functor sig => 
+--runLocal :: Functor sig =>
 --  s -> Prog (State s + Nondet + sig) a -> Prog sig [(s,a)]
 runLocal :: Functor sig =>
      s -> Prog (State s + (Nondet + sig)) a -> Prog sig [(s, a)]
@@ -176,7 +180,7 @@ runGlobal :: Functor sig =>
      s -> Prog (Nondet + (State s + sig)) a -> Prog sig (s, [a])
 runGlobal s = (runState s) . solutions
 
-choices :: (Nondet ⊂ sig,State Int ⊂ sig) => 
+choices :: (Nondet ⊂ sig,State Int ⊂ sig) =>
   Prog sig a -> Prog sig a
 choices (Return a) = return a
 choices (Fail) = fail
@@ -188,12 +192,12 @@ incr = get >>= put . (succ :: Int -> Int)
 
 knapsack :: (Nondet ⊂ sig) => Int -> [Int] -> Prog sig [Int]
 
-knapsack w vs 
+knapsack w vs
   | w < 0 = fail
   | w == 0 = Return []
-  | w > 0 = do 
+  | w > 0 = do
               v <- select vs
-              vs' <- knapsack (w - v) vs 
+              vs' <- knapsack (w - v) vs
               Return (v : vs')
 
 select ::(Nondet ⊂ sig) => [a] -> Prog sig a
@@ -254,7 +258,7 @@ digit = foldr choice fail (fmap symbol ['0' .. '9'])
 
 many,many1 ::(Nondet ⊂ sig) => Prog sig a -> Prog sig [a]
 many p = choice (many1 p) (return [])
-many1 p = do 
+many1 p = do
             a <- p
             as <- many p
             return (a : as)
@@ -276,13 +280,13 @@ expr = choice
         (do i <- term; symbol '+'; j <- expr; return (i+j))
         (do i <- term; return i)
 term :: (Nondet ⊂ sig,Symbol ⊂ sig) => Prog sig Int
-term = 
+term =
   choice
   do i <- factor; symbol '*'; j <- term; return (i * j)
   do i <- factor; return i
 
 factor :: (Nondet ⊂ sig,Symbol ⊂ sig) => Prog sig Int
-factor = 
+factor =
   choice
   do ds <- many1 digit; return (read ds)
   do symbol '('; i <- expr; symbol ')'; return i
@@ -291,16 +295,16 @@ testParse :: [Int]
 testParse = (allsols . parse "2+8*5") expr
 
 expr1 ::(Nondet ⊂ sig,Symbol ⊂ sig) => Prog sig Int
-expr1 = do 
+expr1 = do
           i <- term
           choice
             do symbol '+'; j <- expr1; return (i + j)
             do return i
 
 expr2 :: (Nondet ⊂ sig,Symbol ⊂ sig) => Prog sig Int
-expr2 = do 
+expr2 = do
           i <- term
-          call 
+          call
             (choice
               do symbol '+'; cut; j <- expr2; return (i+j)
               do return i)
@@ -310,8 +314,8 @@ expr2 = do
 --- 7. Scoped Syntax
 
 
-data Call cnt 
-  = BCall' cnt 
+data Call cnt
+  = BCall' cnt
   | ECall' cnt
   deriving Functor
 pattern BCall p <- (project -> Just (BCall' p))
@@ -319,15 +323,15 @@ pattern ECall p <- (project -> Just (ECall' p))
 
 
 call' ::(Call ⊂ sig) => Prog sig a -> Prog sig a
-call' p = do begin; x <- p; end ; return x 
+call' p = do begin; x <- p; end ; return x
   where
     begin = inject (BCall' (return ()))
     end = inject (ECall' (return ()))
 
 
-expr3 ::(Nondet ⊂ sig,Symbol ⊂ sig,Call ⊂ sig,Cut ⊂ sig) 
+expr3 ::(Nondet ⊂ sig,Symbol ⊂ sig,Call ⊂ sig,Cut ⊂ sig)
   => Prog sig Int
-expr3 = do 
+expr3 = do
           i <- term
           call' $
             choice
@@ -339,7 +343,7 @@ expr3 = do
 
 testParse2 = run . solutions . runCut . parse "1" $ expr3
 
-runCut ::(Nondet ⊂ sig) => 
+runCut ::(Nondet ⊂ sig) =>
   Prog (Call + Cut + sig) a -> Prog sig a
 runCut p = call (bcall p)
 
@@ -360,7 +364,7 @@ ecall (Other op) = Op (fmap ecall op)
 -}
 
 
-upcast ::(Functor f, Functor sig) 
+upcast ::(Functor f, Functor sig)
   => Prog sig a -> Prog (f + sig) a
 upcast (Return x) = return x
 upcast (Op op) = Op (Inr (fmap upcast op))
@@ -386,7 +390,7 @@ runExc (Throw e) = return (Left e)
 runExc (Other op) = Op (fmap runExc op)
 
 
-catch ::(Exc e ⊂ sig) => 
+catch ::(Exc e ⊂ sig) =>
   Prog sig a -> (e -> Prog sig a) -> Prog sig a
 catch (Return x) h = return x
 catch (Throw e) h = h e
@@ -397,9 +401,9 @@ tripleDecr :: (State Int ⊂ sig, Exc () ⊂ sig) => Prog sig ()
 tripleDecr = decr >> catch (decr >> decr) return
 
 decr::(State Int ⊂ sig,Exc () ⊂ sig) => Prog sig ()
-decr = do 
+decr = do
         x <- get
-        if x > (0 ::Int) 
+        if x > (0 ::Int)
           then put (pred x)
           else throw ()
 
@@ -412,8 +416,8 @@ testCatch = (run . runExc . runState (2 :: Int) ) tripleDecr
 {-
 --- doesn't work with Functor bla bla
 
-data Catch e cnt 
-  = BCatch' cnt (e -> cnt) 
+data Catch e cnt
+  = BCatch' cnt (e -> cnt)
   | ECatch' cnt
   deriving Functor
 pattern BCatch p q <- (project -> Just (BCatch' p q))
@@ -421,7 +425,7 @@ pattern ECatch p <- (project -> Just (ECatch' p))
 
 catch' :: (forall sig e a . (Catch e ⊂ sig)) =>
   Prog sig a -> (e -> Prog sig a) -> Prog sig a
-catch' p h = begin (do x <- p; end ; return x) h 
+catch' p h = begin (do x <- p; end ; return x) h
   where
     begin p q = inject (BCatch' p q)
     end = inject (ECatch' (return ()) :: Catch e (Prog sig ()))
@@ -433,7 +437,7 @@ runCatch p = runExc (bcatch p)
 bcatch ::(Functor sig) =>
   Prog (Catch e + (Exc e + sig)) a -> Prog (Exc e + sig) a
 bcatch (Return a) = return a
-bcatch (BCatch p q) = do 
+bcatch (BCatch p q) = do
                         r <- upcast (runExc (ecatch p))
                         case r of
                           Left e -> bcatch (q e)
@@ -444,7 +448,7 @@ bcatch (Other op) = Op (fmap bcatch op)
 ecatch ::(Functor sig) =>
   Prog (Catch e + (Exc e + sig)) a -> Prog (Exc e + sig) (Prog (Catch e + (Exc e + sig)) a)
 ecatch (Return a) = return (Return a)
-ecatch (BCatch p q) = do 
+ecatch (BCatch p q) = do
                         r <- upcast (runExc (ecatch p))
                         case r of
                           Left e -> ecatch (q e)
@@ -504,9 +508,7 @@ instance Syntax (HExc e) where
   emap f (Throw' e) = Throw' e
   emap f (Catch' p h k) = Catch' p h (f . k)
   weave f hdl (Throw' x) = Throw' x
-  weave f hdl (Catch' p h k) = Catch' 
+  weave f hdl (Catch' p h k) = Catch'
                                 (hdl (fmap (const p) f))
                                 (\e -> hdl (fmap (const (h e)) f))
                                 (hdl . fmap k)
-
-
